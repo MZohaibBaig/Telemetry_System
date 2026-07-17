@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Telemetry Dashboard</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 24px; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  #status { font-size: 13px; color: #94a3b8; margin-bottom: 20px; }
+  #status.connected { color: #4ade80; }
+  #status.error { color: #f87171; }
+  .login-box { display: flex; gap: 8px; margin-bottom: 24px; flex-wrap: wrap; }
+  .login-box input { background: #1e293b; border: 1px solid #334155; color: #e2e8f0; padding: 8px 10px; border-radius: 6px; }
+  .login-box button { background: #3b82f6; border: none; color: white; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+  .login-box button:hover { background: #2563eb; }
+  #devices { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+  .card { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 16px; }
+  .card h3 { margin: 0 0 4px 0; font-size: 15px; }
+  .card .type { font-size: 12px; color: #94a3b8; margin-bottom: 10px; }
+  .card .value { font-size: 28px; font-weight: 600; }
+  .card .unit { font-size: 13px; color: #94a3b8; margin-left: 4px; }
+  .card .meta { font-size: 11px; color: #64748b; margin-top: 8px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .dot.online { background: #4ade80; }
+  .dot.offline { background: #64748b; }
+  canvas { width: 100%; height: 50px; margin-top: 10px; }
+</style>
+</head>
+<body>
+
+<h1>Telemetry Dashboard</h1>
+<div id="status">Not connected</div>
+
+<div class="login-box">
+  <input id="email" placeholder="email" value="test@example.com">
+  <input id="password" placeholder="password" type="password" value="testpass123">
+  <button onclick="connect()">Connect</button>
+</div>
+
+<div id="devices"></div>
+
+<script>
+let token = null;
+let ws = null;
+const deviceCards = {};   // device_id -> { card, canvas, history: [] }
+
+async function connect() {
+  const email = document.getElementById('email').value;
+  const password = document.getElementById('password').value;
+  const statusEl = document.getElementById('status');
+
+  try {
+    const loginRes = await fetch('/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    if (!loginRes.ok) throw new Error('Login failed');
+    const loginData = await loginRes.json();
+    token = loginData.access_token;
+
+    const devicesRes = await fetch('/devices', {
+      headers: { 'Authorization': 'Bearer ' + token }
+    });
+    const devices = await devicesRes.json();
+    devices.forEach(renderDeviceCard);
+
+    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(wsProtocol + '//' + location.host + '/ws?token=' + encodeURIComponent(token));
+
+    ws.onopen = () => {
+      statusEl.textContent = 'Connected — waiting for readings...';
+      statusEl.className = 'connected';
+    };
+    ws.onmessage = (event) => {
+      const reading = JSON.parse(event.data);
+      updateDeviceCard(reading);
+    };
+    ws.onerror = () => {
+      statusEl.textContent = 'WebSocket error';
+      statusEl.className = 'error';
+    };
+    ws.onclose = () => {
+      statusEl.textContent = 'Disconnected';
+      statusEl.className = 'error';
+    };
+  } catch (err) {
+    statusEl.textContent = 'Error: ' + err.message;
+    statusEl.className = 'error';
+  }
+}
+
+function renderDeviceCard(device) {
+  const container = document.getElementById('devices');
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = `
+    <h3>${device.device_name}</h3>
+    <div class="type">${device.device_type}</div>
+    <div class="value" id="val-${device.id}">--<span class="unit" id="unit-${device.id}"></span></div>
+    <canvas id="chart-${device.id}"></canvas>
+    <div class="meta">
+      <span class="dot ${device.is_online ? 'online' : 'offline'}" id="dot-${device.id}"></span>
+      <span id="seen-${device.id}">${device.last_seen_at ? 'Last seen: ' + device.last_seen_at : 'No readings yet'}</span>
+    </div>
+  `;
+  container.appendChild(card);
+  deviceCards[device.id] = { history: [] };
+}
+
+function updateDeviceCard(reading) {
+  const id = reading.device_id;
+  if (!deviceCards[id]) {
+    // Device wasn't in the initial list (created after page load) — render it now.
+    renderDeviceCard({ id, device_name: reading.device_name, device_type: '', is_online: true, last_seen_at: null });
+  }
+
+  document.getElementById('val-' + id).firstChild.textContent = reading.value;
+  document.getElementById('unit-' + id).textContent = ' ' + reading.unit;
+  document.getElementById('seen-' + id).textContent = 'Last seen: ' + new Date(reading.recorded_at).toLocaleTimeString();
+  document.getElementById('dot-' + id).className = 'dot online';
+
+  const state = deviceCards[id];
+  state.history.push(reading.value);
+  if (state.history.length > 30) state.history.shift();
+  drawSparkline(id, state.history);
+}
+
+function drawSparkline(id, values) {
+  const canvas = document.getElementById('chart-' + id);
+  if (!canvas || values.length < 2) return;
+  canvas.width = canvas.clientWidth;
+  canvas.height = canvas.clientHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+
+  ctx.beginPath();
+  ctx.strokeStyle = '#4ade80';
+  ctx.lineWidth = 2;
+  values.forEach((v, i) => {
+    const x = (i / (values.length - 1)) * canvas.width;
+    const y = canvas.height - ((v - min) / range) * canvas.height;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+}
+</script>
+
+</body>
+</html>
