@@ -4,6 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.database import get_db
 from app.models import User, Device, Reading, utcnow
@@ -25,13 +26,12 @@ def _get_owned_device(device_id: int, current_user: User, db: Session) -> Device
     return device
 
 
-@router.post("", response_model=ReadingOut, status_code=status.HTTP_201_CREATED)
-async def create_reading(
+def _create_reading_sync(
     device_id: int,
     reading_in: ReadingCreate,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
+    current_user: User,
+    db: Session,
+) -> tuple[Reading, Device]:
     device = _get_owned_device(device_id, current_user, db)
 
     reading = Reading(
@@ -46,6 +46,19 @@ async def create_reading(
 
     db.commit()
     db.refresh(reading)
+    return reading, device
+
+
+@router.post("", response_model=ReadingOut, status_code=status.HTTP_201_CREATED)
+async def create_reading(
+    device_id: int,
+    reading_in: ReadingCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    reading, device = await run_in_threadpool(
+        _create_reading_sync, device_id, reading_in, current_user, db
+    )
 
     await manager.broadcast_to_user(
         current_user.id,

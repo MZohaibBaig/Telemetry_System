@@ -1,6 +1,7 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Depends
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.database import get_db
 from app.models import User
@@ -42,6 +43,10 @@ def get_user_id_from_token(token: str) -> int | None:
         return None
 
 
+def _get_user_by_id(db: Session, user_id: int) -> User | None:
+    return db.query(User).filter(User.id == user_id).first()
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
@@ -53,7 +58,7 @@ async def websocket_endpoint(
         await websocket.close(code=1008)  # 1008 = policy violation (standard WS code for auth failure)
         return
 
-    user = db.query(User).filter(User.id == user_id).first()
+    user = await run_in_threadpool(_get_user_by_id, db, user_id)
     if user is None:
         await websocket.close(code=1008)
         return
