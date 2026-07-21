@@ -2,6 +2,7 @@ import os
 import re
 
 import pytest
+from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from fastapi.testclient import TestClient
@@ -10,16 +11,39 @@ from app.database import Base, get_db, DATABASE_URL
 from app.main import app
 from app import models  # noqa: F401  ensures all tables are registered on Base.metadata
 
+# override=False (the default): a real TEST_DATABASE_URL already in the
+# environment (e.g. set by CI) wins. This only fills the gap when nothing
+# set it, so test config never depends on the app's .env being present.
+load_dotenv(".env.test")
+
+_FALLBACK_TEST_DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/telemetry_test_db"
+
+
+def _dbname(url: str) -> str:
+    match = re.search(r"/([^/?]+)(\?.*)?$", url)
+    return match.group(1) if match else ""
+
 
 def _derive_test_database_url() -> str:
-    """Point tests at the same Postgres server/credentials as the real app,
-    but at a dedicated `telemetry_test_db` database. Override with the
-    TEST_DATABASE_URL env var if your test DB lives elsewhere.
+    """Tests must run against their own database, never the app's.
+
+    Reads TEST_DATABASE_URL (populated via .env.test), falling back to a
+    hardcoded, distinctly-named local test database. Unlike the app's
+    DATABASE_URL, this is intentionally NOT derived from .env, so a missing
+    or misconfigured .env.test can never silently fall back to production
+    credentials. As a last line of defense, we also refuse to start if the
+    resolved test database name ever matches the app's.
     """
-    override = os.getenv("TEST_DATABASE_URL")
-    if override:
-        return override
-    return re.sub(r"/[^/?]+(\?.*)?$", "/telemetry_test_db", DATABASE_URL)
+    url = os.getenv("TEST_DATABASE_URL", _FALLBACK_TEST_DATABASE_URL)
+
+    if _dbname(url) == _dbname(DATABASE_URL):
+        raise RuntimeError(
+            f"TEST_DATABASE_URL resolves to the same database as the app's "
+            f"DATABASE_URL ('{_dbname(url)}'). Tests must use a separate "
+            "database - set TEST_DATABASE_URL in .env.test to a distinct "
+            "dbname."
+        )
+    return url
 
 
 TEST_DATABASE_URL = _derive_test_database_url()
