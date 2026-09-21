@@ -45,6 +45,12 @@ flowchart TB
 
 **Run exactly one API replica / one uvicorn worker.** Live WebSocket push relies on in-process connection state, so scaling out breaks it (see Known limitations).
 
+## Public demo and retention
+
+`/demo` needs no login. On startup the app get-or-creates a demo user (random, discarded password, so it can't be logged into) and three demo devices. While at least one viewer is connected to `/demo/ws`, a background task writes one reading per device every 3 s; when the last viewer leaves it stops, so an unwatched demo writes nothing. `/demo/ws` is read-only, streams only the demo devices, and rejects connections beyond 20 (close code 1013).
+
+**Retention applies to the whole `readings` table, not just demo data.** `init_db` adds a TimescaleDB retention policy that drops readings older than 48 hours, including real users' readings. Chunks are set to 1 day for new chunks so the policy is close to 48 h; chunks created before this change keep their original interval.
+
 ## Endpoints
 
 | Method | Path | Description |
@@ -61,6 +67,8 @@ flowchart TB
 | GET | `/devices/{id}/readings/range` | Readings within a time window |
 | GET | `/devices/{id}/readings/aggregate` | Time-bucketed avg/min/max (TimescaleDB `time_bucket`) |
 | WS | `/ws?token=<jwt>` | Live per-user reading broadcast |
+| GET | `/demo` | Public live demo page (no login) |
+| WS | `/demo/ws` | Public, read-only stream of the demo devices (max 20 concurrent) |
 
 All data is scoped to `current_user.id`; cross-user access returns 404, not 403, to avoid confirming resource existence to an unauthorized caller.
 

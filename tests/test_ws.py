@@ -119,3 +119,36 @@ class TestWebSocketUserIsolation:
             # SECURITY: user isolation over the WS channel - Bob must not
             # see Alice's reading broadcast on his own socket.
             _assert_no_message(bob_ws)
+
+
+class _BrokenSocket:
+    async def send_json(self, message):
+        raise RuntimeError("socket is dead")
+
+
+class TestBroadcastResilience:
+    def test_one_broken_socket_does_not_break_ingestion(self, client, alice):
+        from app.routers.ws import manager
+
+        device_id = client.post(
+            "/devices",
+            json={"device_name": "Rooftop Sensor", "device_type": "temperature"},
+            headers=alice["headers"],
+        ).json()["id"]
+        user_id = alice["user"]["id"]
+
+        with client.websocket_connect(f"/ws?token={alice['token']}") as ws:
+            broken = _BrokenSocket()
+            # Put the dead socket first so it is hit before the healthy one.
+            manager.active_connections[user_id].insert(0, broken)
+
+            resp = client.post(
+                f"/devices/{device_id}/readings",
+                json={"value": 12.5, "unit": "celsius"},
+                headers=alice["headers"],
+            )
+            assert resp.status_code == 201
+
+            message = _receive_with_timeout(ws)
+            assert message is not None and message["value"] == 12.5
+            assert broken not in manager.active_connections[user_id]
