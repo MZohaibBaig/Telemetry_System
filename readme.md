@@ -37,7 +37,13 @@ flowchart TB
 5. `python create_tables.py`
 6. In `psql`: `SELECT create_hypertable('readings', 'recorded_at');` — **manual step, not yet automated** (a known limitation; a startup check or Alembic migration would be the natural fix).
 7. `uvicorn app.main:app --reload`
-8. Open `http://127.0.0.1:8000/static/dashboard.html` for the live dashboard, or run `python simulate_device.py` to generate demo data.
+7. Open `http://127.0.0.1:8000/static/dashboard.html` for the live dashboard, or run `python simulate_device.py` to generate demo data.
+
+## Deployment
+
+`docker compose up` on a fresh host needs `POSTGRES_PASSWORD` and `SECRET_KEY` set (compose fails loudly if not). The API creates tables and the hypertable on startup and binds `0.0.0.0:$PORT` (default 8000). The container runs as a non-root user.
+
+**Run exactly one API replica / one uvicorn worker.** Live WebSocket push relies on in-process connection state, so scaling out breaks it (see Known limitations).
 
 ## Endpoints
 
@@ -70,6 +76,7 @@ pytest tests/ -v
 
 ## Known limitations
 
-- Hypertable conversion is a manual `psql` step after `create_tables.py`, not automated.
+- Schema/hypertable setup runs from a startup hook, not a migration tool, so future schema changes (column adds etc.) are not applied automatically.
+- **Single replica only:** connected WebSocket clients are held in per-process memory (`ConnectionManager` in `app/routers/ws.py`), with no Redis/pub-sub. Running more than one replica or uvicorn worker breaks live push: a reading posted to one instance only reaches sockets connected to that same instance.
 - `docker-compose.yml` is written but not yet run locally (Docker Desktop install deferred to Project 5).
 - No pagination on `/devices/{id}/readings/recent` beyond a `limit` query param.
