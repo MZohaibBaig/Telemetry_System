@@ -1,10 +1,11 @@
 import argparse
+import os
 import random
 import time
 
 import httpx
 
-BASE_URL = "http://127.0.0.1:8000"
+BASE_URL = os.getenv("SIMULATOR_BASE_URL", "http://127.0.0.1:8000")
 
 
 def login(email: str, password: str) -> str:
