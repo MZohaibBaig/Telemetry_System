@@ -1,52 +1,17 @@
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-from starlette.concurrency import run_in_threadpool
 
 from app.database import get_db
-from app.models import User, Device, Reading, utcnow
+from app.models import User, Reading, utcnow
 from app.schemas import ReadingCreate, ReadingOut, ReadingAggregateOut
 from app.auth import get_current_user
-from app.routers.ws import manager
+from app.ingest import ingest_reading, _get_owned_device
 
 router = APIRouter(prefix="/devices/{device_id}/readings", tags=["readings"])
-
-
-def _get_owned_device(device_id: int, current_user: User, db: Session) -> Device:
-    device = (
-        db.query(Device)
-        .filter(Device.id == device_id, Device.user_id == current_user.id)
-        .first()
-    )
-    if not device:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device not found")
-    return device
-
-
-def _create_reading_sync(
-    device_id: int,
-    reading_in: ReadingCreate,
-    current_user: User,
-    db: Session,
-) -> tuple[Reading, Device]:
-    device = _get_owned_device(device_id, current_user, db)
-
-    reading = Reading(
-        device_id=device.id,
-        value=reading_in.value,
-        unit=reading_in.unit,
-    )
-    db.add(reading)
-
-    device.last_seen_at = utcnow()
-    device.is_online = True
-
-    db.commit()
-    db.refresh(reading)
-    return reading, device
 
 
 @router.post("", response_model=ReadingOut, status_code=status.HTTP_201_CREATED)
@@ -56,22 +21,9 @@ async def create_reading(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    reading, device = await run_in_threadpool(
-        _create_reading_sync, device_id, reading_in, current_user, db
+    return await ingest_reading(
+        db, current_user.id, device_id, reading_in.value, reading_in.unit
     )
-
-    await manager.broadcast_to_user(
-        current_user.id,
-        {
-            "device_id": device.id,
-            "device_name": device.device_name,
-            "value": reading.value,
-            "unit": reading.unit,
-            "recorded_at": reading.recorded_at.isoformat(),
-        },
-    )
-
-    return reading
 
 
 @router.get("/recent", response_model=list[ReadingOut])
@@ -81,7 +33,7 @@ def get_recent_readings(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    device = _get_owned_device(device_id, current_user, db)
+    device = _get_owned_device(device_id, current_user.id, db)
     return (
         db.query(Reading)
         .filter(Reading.device_id == device.id)
@@ -99,7 +51,7 @@ def get_readings_in_range(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    device = _get_owned_device(device_id, current_user, db)
+    device = _get_owned_device(device_id, current_user.id, db)
     return (
         db.query(Reading)
         .filter(
@@ -121,7 +73,7 @@ def get_aggregated_readings(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    device = _get_owned_device(device_id, current_user, db)
+    device = _get_owned_device(device_id, current_user.id, db)
 
     if end is None:
         end = utcnow()

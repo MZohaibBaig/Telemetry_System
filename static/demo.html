@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Telemetry Live Demo</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 24px; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  #status { font-size: 13px; color: #94a3b8; margin-bottom: 20px; }
+  #status.connected { color: #4ade80; }
+  #status.error { color: #f87171; }
+  #devices { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+  .card { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 16px; }
+  .card h3 { margin: 0 0 4px 0; font-size: 15px; }
+  .card .type { font-size: 12px; color: #94a3b8; margin-bottom: 10px; }
+  .card .value { font-size: 28px; font-weight: 600; }
+  .card .unit { font-size: 13px; color: #94a3b8; margin-left: 4px; }
+  .card .meta { font-size: 11px; color: #64748b; margin-top: 8px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: #64748b; }
+  .dot.online { background: #4ade80; }
+  canvas { width: 100%; height: 50px; margin-top: 10px; }
+</style>
+</head>
+<body>
+
+<h1>Telemetry Live Demo</h1>
+<div id="status">Connecting...</div>
+<div id="devices"></div>
+
+<script>
+const cards = {};   // device_id -> { value, unit, seen, dot, canvas, history: [] }
+const statusEl = document.getElementById('status');
+
+function setStatus(text, cls) {
+  statusEl.textContent = text;
+  statusEl.className = cls || '';
+}
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function renderCard(id, name, type) {
+  const card = el('div', 'card');
+  const value = el('div', 'value', '--');
+  const unit = el('span', 'unit');
+  value.appendChild(unit);
+  const canvas = el('canvas');
+  const meta = el('div', 'meta');
+  const dot = el('span', 'dot');
+  const seen = el('span', '', 'No readings yet');
+  meta.append(dot, seen);
+  card.append(el('h3', '', name), el('div', 'type', type || ''), value, canvas, meta);
+  document.getElementById('devices').appendChild(card);
+  cards[id] = { value, unit, seen, dot, canvas, history: [] };
+}
+
+function applyReading(id, r) {
+  const c = cards[id];
+  if (!c) return;
+  c.value.firstChild.textContent = r.value;
+  c.unit.textContent = ' ' + r.unit;
+  c.seen.textContent = 'Last seen: ' + new Date(r.recorded_at).toLocaleTimeString();
+  c.dot.className = 'dot online';
+  c.history.push(r.value);
+  if (c.history.length > 30) c.history.shift();
+}
+
+function drawSparkline(canvas, values) {
+  if (values.length < 2) return;
+  canvas.width = canvas.clientWidth;
+  canvas.height = canvas.clientHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  ctx.beginPath();
+  ctx.strokeStyle = '#4ade80';
+  ctx.lineWidth = 2;
+  values.forEach((v, i) => {
+    const x = (i / (values.length - 1)) * canvas.width;
+    const y = canvas.height - ((v - min) / range) * canvas.height;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+}
+
+const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const ws = new WebSocket(proto + '//' + location.host + '/demo/ws');
+
+ws.onopen = () => setStatus('Connected — waiting for readings...', 'connected');
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+  if (msg.type === 'snapshot') {
+    msg.devices.forEach((d) => {
+      renderCard(d.device_id, d.device_name, d.device_type);
+      d.readings.forEach((r) => applyReading(d.device_id, r));
+      drawSparkline(cards[d.device_id].canvas, cards[d.device_id].history);
+    });
+    return;
+  }
+  applyReading(msg.device_id, msg);
+  if (cards[msg.device_id]) drawSparkline(cards[msg.device_id].canvas, cards[msg.device_id].history);
+};
+ws.onerror = () => setStatus('WebSocket error', 'error');
+ws.onclose = (event) => {
+  setStatus(event.code === 1013 ? 'Demo is full right now — try again in a minute.' : 'Disconnected', 'error');
+};
+</script>
+
+</body>
+</html>

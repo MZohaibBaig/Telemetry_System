@@ -27,8 +27,15 @@ class ConnectionManager:
                 del self.active_connections[user_id]
 
     async def broadcast_to_user(self, user_id: int, message: dict):
-        for connection in self.active_connections.get(user_id, []):
-            await connection.send_json(message)
+        # Iterate a copy: dead sockets are removed from the live list as we go.
+        dead = []
+        for connection in list(self.active_connections.get(user_id, [])):
+            try:
+                await connection.send_json(message)
+            except Exception:
+                dead.append(connection)
+        for connection in dead:
+            self.disconnect(connection, user_id)
 
 
 manager = ConnectionManager()

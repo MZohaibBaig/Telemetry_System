@@ -23,6 +23,17 @@ def init_db() -> None:
                     "if_not_exists => TRUE, migrate_data => TRUE)"
                 )
             )
+            # Retention drops whole chunks only. The 7-day default would keep
+            # data ~9 days, so use 1-day chunks (applies to new chunks).
+            conn.execute(
+                text("SELECT set_chunk_time_interval('readings', INTERVAL '1 day')")
+            )
+            conn.execute(
+                text(
+                    "SELECT add_retention_policy("
+                    "'readings', INTERVAL '48 hours', if_not_exists => TRUE)"
+                )
+            )
             conn.commit()
         finally:
             conn.rollback()

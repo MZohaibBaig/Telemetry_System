@@ -7,11 +7,14 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.db_init import init_db
-from app.routers import auth, devices, readings, ws
+from app.database import SessionLocal
+from app.routers import auth, demo, devices, readings, ws
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    with SessionLocal() as db:
+        demo.seed_demo(db)
     yield
 
 
@@ -21,6 +24,7 @@ app.include_router(auth.router)
 app.include_router(devices.router)
 app.include_router(readings.router)
 app.include_router(ws.router)
+app.include_router(demo.router)
 
 app.mount("/static", StaticFiles(directory="static", check_dir=False), name="static")
 
