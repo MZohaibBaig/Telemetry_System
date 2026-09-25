@@ -4,6 +4,12 @@ A real-time telemetry ingestion and monitoring backend. Simulated devices POST s
 
 Every prior project in this portfolio was request → response. This one adds a genuinely different architectural pillar: persistent stateful connections, server-initiated push, and time-series storage at scale.
 
+## Live demo
+
+https://telemetrysystem-production.up.railway.app/demo — no signup required. Live WebSocket push; the simulator only runs while someone is watching the page.
+
+[API docs](https://telemetrysystem-production.up.railway.app/docs) · [Health check](https://telemetrysystem-production.up.railway.app/health)
+
 ## Architecture
 
 ```mermaid
