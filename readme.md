@@ -32,7 +32,7 @@ flowchart TB
 | ORM | SQLAlchemy | Composite primary key on `readings` (id, recorded_at) — required for hypertable partitioning |
 | Auth | JWT via `Authorization: Bearer` header (HTTP) / query param (WebSocket handshake) | Browsers can't set custom headers on a WS handshake — the query-param exception is deliberate and documented |
 | Testing | pytest + FastAPI TestClient | Isolated `telemetry_test_db` (real Postgres, not SQLite — SQLite can't replicate a hypertable) |
-| Containerization | Docker Compose (`timescale/timescaledb:latest-pg18` + custom API image) | Not yet run locally — Docker Desktop install/verification is deferred to Project 5 |
+| Containerization | Dockerfile (API image) + Docker Compose (`timescale/timescaledb:latest-pg18`) | Deployed on Railway, built from the repo `Dockerfile` |
 
 ## Setup
 
@@ -40,10 +40,8 @@ flowchart TB
 2. `pip install -r requirements.txt`
 3. Copy `.env.example` to `.env` and fill in real values (`DATABASE_URL`, `SECRET_KEY`, `POSTGRES_PASSWORD`).
 4. Ensure PostgreSQL 18 + TimescaleDB extension are installed and running locally.
-5. `python create_tables.py`
-6. In `psql`: `SELECT create_hypertable('readings', 'recorded_at');` — **manual step, not yet automated** (a known limitation; a startup check or Alembic migration would be the natural fix).
-7. `uvicorn app.main:app --reload`
-7. Open `http://127.0.0.1:8000/static/dashboard.html` for the live dashboard, or run `python simulate_device.py` to generate demo data.
+5. `uvicorn app.main:app --reload` — tables, the `readings` hypertable and the retention policy are created automatically on startup (`app/db_init.py`).
+6. Open `http://127.0.0.1:8000/static/dashboard.html` for the live dashboard, or run `python simulate_device.py` to generate demo data.
 
 ## Deployment
 
@@ -80,7 +78,7 @@ All data is scoped to `current_user.id`; cross-user access returns 404, not 403,
 
 ## Testing
 
-26 pytest tests across three files (`test_api.py`, `test_ws.py`, `test_readings_history.py`), run against an isolated `telemetry_test_db` — a real Postgres/TimescaleDB instance, not SQLite, since the `readings` hypertable can't be replicated in-memory. Coverage includes auth, full user-data isolation (including WebSocket broadcast isolation — user A's readings never reach user B's socket), the reading→broadcast→device-status pipeline, and TimescaleDB aggregate correctness.
+34 pytest tests across three files (`test_api.py`, `test_ws.py`, `test_readings_history.py`), run against an isolated `telemetry_test_db` — a real Postgres/TimescaleDB instance, not SQLite, since the `readings` hypertable can't be replicated in-memory. Coverage includes auth, full user-data isolation (including WebSocket broadcast isolation — user A's readings never reach user B's socket), the reading→broadcast→device-status pipeline, and TimescaleDB aggregate correctness.
 
 Automated testing caught two real bugs before they reached manual testing: a `passlib`/`bcrypt` version mismatch that silently broke all password hashing, and a missing `autoincrement=True` on the `readings` composite primary key that blocked every insert. Both were pre-existing in the app code, not artifacts of the test suite.
 
@@ -92,5 +90,5 @@ pytest tests/ -v
 
 - Schema/hypertable setup runs from a startup hook, not a migration tool, so future schema changes (column adds etc.) are not applied automatically.
 - **Single replica only:** connected WebSocket clients are held in per-process memory (`ConnectionManager` in `app/routers/ws.py`), with no Redis/pub-sub. Running more than one replica or uvicorn worker breaks live push: a reading posted to one instance only reaches sockets connected to that same instance.
-- `docker-compose.yml` is written but not yet run locally (Docker Desktop install deferred to Project 5).
+- Deployed on Railway, built from the repo `Dockerfile`; `docker-compose.yml` is for local runs.
 - No pagination on `/devices/{id}/readings/recent` beyond a `limit` query param.
