@@ -11,7 +11,7 @@ from app.auth import hash_password
 from app.database import SessionLocal
 from app.ingest import ingest_reading
 from app.models import Device, Reading, User
-from app.routers.ws import manager
+from app.routers.ws import hold_open, manager
 
 router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
@@ -20,6 +20,7 @@ DEMO_EMAIL = "demo@example.invalid"
 MAX_DEMO_CONNECTIONS = 20
 SIMULATE_INTERVAL = 3.0  # seconds, matches simulate_device.py
 SNAPSHOT_SIZE = 30
+DEMO_WS_MAX_SECONDS = 10 * 60  # open demo sockets keep the app (and simulator) awake
 
 # name -> (device_type, unit, min, max)
 DEMO_DEVICES = {
@@ -166,8 +167,7 @@ async def demo_ws(websocket: WebSocket):
         await manager.connect(websocket, user_id)
         _start_simulator()
         await websocket.send_json(snapshot)
-        while True:
-            await websocket.receive_text()
+        await hold_open(websocket, DEMO_WS_MAX_SECONDS)
     except WebSocketDisconnect:
         pass
     finally:

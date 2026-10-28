@@ -199,3 +199,10 @@ class TestReadings:
             headers=bob["headers"],
         )
         assert bob_post.status_code == 404
+
+
+def test_robots_txt_disallows_all(client):
+    resp = client.get("/robots.txt")
+    assert resp.status_code == 200
+    assert resp.text == "User-agent: *\nDisallow: /"
+    assert resp.headers["content-type"].startswith("text/plain")

@@ -13,6 +13,8 @@
   .login-box input { background: #1e293b; border: 1px solid #334155; color: #e2e8f0; padding: 8px 10px; border-radius: 6px; }
   .login-box button { background: #3b82f6; border: none; color: white; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
   .login-box button:hover { background: #2563eb; }
+  .resume { background: #3b82f6; border: none; color: white; padding: 8px 16px; border-radius: 6px; cursor: pointer; margin-bottom: 20px; }
+  .resume:hover { background: #2563eb; }
   #devices { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
   .card { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 16px; }
   .card h3 { margin: 0 0 4px 0; font-size: 15px; }
@@ -30,6 +32,7 @@
 
 <h1>Telemetry Dashboard</h1>
 <div id="status">Not connected</div>
+<button id="resume" class="resume" hidden onclick="openSocket()">Resume</button>
 
 <div class="login-box">
   <input id="email" placeholder="email">
@@ -65,29 +68,43 @@ async function connect() {
     const devices = await devicesRes.json();
     devices.forEach(renderDeviceCard);
 
-    const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws = new WebSocket(wsProtocol + '//' + location.host + '/ws?token=' + encodeURIComponent(token));
-
-    ws.onopen = () => {
-      statusEl.textContent = 'Connected — waiting for readings...';
-      statusEl.className = 'connected';
-    };
-    ws.onmessage = (event) => {
-      const reading = JSON.parse(event.data);
-      updateDeviceCard(reading);
-    };
-    ws.onerror = () => {
-      statusEl.textContent = 'WebSocket error';
-      statusEl.className = 'error';
-    };
-    ws.onclose = () => {
-      statusEl.textContent = 'Disconnected';
-      statusEl.className = 'error';
-    };
+    openSocket();
   } catch (err) {
     statusEl.textContent = 'Error: ' + err.message;
     statusEl.className = 'error';
   }
+}
+
+function openSocket() {
+  const statusEl = document.getElementById('status');
+  const resumeBtn = document.getElementById('resume');
+  resumeBtn.hidden = true;
+
+  const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(wsProtocol + '//' + location.host + '/ws?token=' + encodeURIComponent(token));
+
+  ws.onopen = () => {
+    statusEl.textContent = 'Connected — waiting for readings...';
+    statusEl.className = 'connected';
+  };
+  ws.onmessage = (event) => {
+    const reading = JSON.parse(event.data);
+    updateDeviceCard(reading);
+  };
+  ws.onerror = () => {
+    statusEl.textContent = 'WebSocket error';
+    statusEl.className = 'error';
+  };
+  ws.onclose = (event) => {
+    if (event.code === 4000) {
+      statusEl.textContent = 'Paused to save server resources.';
+      statusEl.className = '';
+      resumeBtn.hidden = false;
+      return;
+    }
+    statusEl.textContent = 'Disconnected';
+    statusEl.className = 'error';
+  };
 }
 
 function renderDeviceCard(device) {

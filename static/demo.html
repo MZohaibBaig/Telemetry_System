@@ -10,6 +10,8 @@
   #status { font-size: 13px; color: #94a3b8; margin-bottom: 20px; }
   #status.connected { color: #4ade80; }
   #status.error { color: #f87171; }
+  #resume { background: #3b82f6; border: none; color: white; padding: 8px 16px; border-radius: 6px; cursor: pointer; margin-bottom: 20px; }
+  #resume:hover { background: #2563eb; }
   #devices { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
   .card { background: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 16px; }
   .card h3 { margin: 0 0 4px 0; font-size: 15px; }
@@ -26,6 +28,7 @@
 
 <h1>Telemetry Live Demo</h1>
 <div id="status">Connecting...</div>
+<button id="resume" hidden>Resume</button>
 <div id="devices"></div>
 
 <script>
@@ -91,12 +94,20 @@ function drawSparkline(canvas, values) {
 }
 
 const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-const ws = new WebSocket(proto + '//' + location.host + '/demo/ws');
+const resumeBtn = document.getElementById('resume');
+
+function connect() {
+  resumeBtn.hidden = true;
+  setStatus('Connecting...');
+  const ws = new WebSocket(proto + '//' + location.host + '/demo/ws');
 
 ws.onopen = () => setStatus('Connected — waiting for readings...', 'connected');
 ws.onmessage = (event) => {
   const msg = JSON.parse(event.data);
   if (msg.type === 'snapshot') {
+    // A resumed connection sends a fresh snapshot; drop the old cards first.
+    document.getElementById('devices').replaceChildren();
+    Object.keys(cards).forEach((id) => delete cards[id]);
     msg.devices.forEach((d) => {
       renderCard(d.device_id, d.device_name, d.device_type);
       d.readings.forEach((r) => applyReading(d.device_id, r));
@@ -109,8 +120,17 @@ ws.onmessage = (event) => {
 };
 ws.onerror = () => setStatus('WebSocket error', 'error');
 ws.onclose = (event) => {
+  if (event.code === 4000) {
+    setStatus('Paused to save server resources.');
+    resumeBtn.hidden = false;
+    return;
+  }
   setStatus(event.code === 1013 ? 'Demo is full right now — try again in a minute.' : 'Disconnected', 'error');
 };
+}
+
+resumeBtn.onclick = connect;
+connect();
 </script>
 
 </body>

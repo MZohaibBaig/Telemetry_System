@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
+from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -32,6 +33,11 @@ app.mount("/static", StaticFiles(directory="static", check_dir=False), name="sta
 @app.get("/")
 def root():
     return {"status": "ok", "service": "telemetry-system"}
+
+
+@app.get("/robots.txt", response_class=PlainTextResponse, include_in_schema=False)
+def robots():
+    return "User-agent: *\nDisallow: /"
 
 
 @app.get("/health")

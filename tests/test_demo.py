@@ -72,6 +72,24 @@ def test_simulator_runs_only_while_viewed_and_streams(client, seeded_with_simula
     assert demo._sim_task is None
 
 
+def test_demo_socket_closes_4000_after_cap_and_simulator_stops(
+    client, seeded_with_simulator, monkeypatch
+):
+    monkeypatch.setattr(demo, "DEMO_WS_MAX_SECONDS", 1)
+    with client.websocket_connect("/demo/ws") as ws:
+        assert ws.receive_json()["type"] == "snapshot"
+        assert demo._sim_task is not None
+        # The first tick's readings arrive, then the cap closes the socket.
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            for _ in range(len(demo.DEMO_DEVICES) + 1):
+                assert _receive_with_timeout(ws) is not None
+    assert exc_info.value.code == 4000
+    assert exc_info.value.reason == "idle timeout"
+    assert demo._sim_task is None
+    assert demo._viewers == 0
+    assert not manager.active_connections
+
+
 def test_demo_sockets_are_registered_only_under_demo_user(client, seeded, alice):
     with client.websocket_connect("/demo/ws") as ws:
         ws.receive_json()

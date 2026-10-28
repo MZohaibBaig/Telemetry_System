@@ -98,6 +98,19 @@ class TestWebSocketAuth:
         assert exc_info.value.code == 1008
 
 
+class TestWebSocketTimeCap:
+    def test_socket_closes_4000_after_cap_and_is_deregistered(self, client, alice, monkeypatch):
+        from app.routers import ws as ws_module
+
+        monkeypatch.setattr(ws_module, "WS_MAX_SECONDS", 1)
+        with client.websocket_connect(f"/ws?token={alice['token']}") as ws:
+            with pytest.raises(WebSocketDisconnect) as exc_info:
+                _receive_with_timeout(ws)
+        assert exc_info.value.code == 4000
+        assert exc_info.value.reason == "idle timeout"
+        assert alice["user"]["id"] not in ws_module.manager.active_connections
+
+
 class TestWebSocketUserIsolation:
     def test_users_do_not_receive_each_others_readings(self, client, alice, bob):
         device_resp = client.post(

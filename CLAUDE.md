@@ -101,5 +101,6 @@ Never report success without running something that proves it.
 - These apps bind `0.0.0.0` on `$PORT` with a fallback. Don't hardcode ports.
 
 **Deployment context**
-- Three projects deploy to Railway sharing one PostgreSQL instance, each with its own database.
+- Three projects deploy to Railway, each with its own PostgreSQL database service (not a shared instance).
 - PG18 volumes mount at `/var/lib/postgresql`, NOT `/var/lib/postgresql/data`. This exact mistake silently broke persistence once.
+- Railway Serverless: never add pooled/persistent DB connections, background tasks or timers; WebSockets must have a time cap.
