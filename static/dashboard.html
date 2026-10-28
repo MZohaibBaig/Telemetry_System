@@ -32,9 +32,9 @@
 
 <h1>Telemetry Dashboard</h1>
 <div id="status">Not connected</div>
-<button id="resume" class="resume" hidden onclick="openSocket()">Resume</button>
+<button id="resume" class="resume" hidden onclick="resumeSocket()">Resume</button>
 
-<div class="login-box">
+<div class="login-box" id="login-box">
   <input id="email" placeholder="email">
   <input id="password" placeholder="password" type="password">
   <button onclick="connect()">Connect</button>
@@ -45,12 +45,20 @@
 <script>
 let token = null;
 let ws = null;
+// The app can be asleep or waking when the socket opens, which closes it abnormally (e.g. 1006).
+// Retry with backoff for up to 30 s before giving up.
+const RETRY_WINDOW_MS = 30000;
+let retryDeadline = null;
+let retryDelay = 500;
+let retryTimer = null;
 const deviceCards = {};   // device_id -> { card, canvas, history: [] }
 
 async function connect() {
   const email = document.getElementById('email').value;
   const password = document.getElementById('password').value;
   const statusEl = document.getElementById('status');
+  clearTimeout(retryTimer);
+  resetRetry();
 
   try {
     const loginRes = await fetch('/auth/login', {
@@ -66,6 +74,9 @@ async function connect() {
       headers: { 'Authorization': 'Bearer ' + token }
     });
     const devices = await devicesRes.json();
+    // A re-login starts from a clean slate instead of stacking duplicate cards.
+    document.getElementById('devices').replaceChildren();
+    Object.keys(deviceCards).forEach((id) => delete deviceCards[id]);
     devices.forEach(renderDeviceCard);
 
     openSocket();
@@ -75,9 +86,20 @@ async function connect() {
   }
 }
 
+function resetRetry() {
+  retryDeadline = null;
+  retryDelay = 500;
+}
+
+function resumeSocket() {
+  resetRetry();
+  openSocket();
+}
+
 function openSocket() {
   const statusEl = document.getElementById('status');
   const resumeBtn = document.getElementById('resume');
+  clearTimeout(retryTimer);
   resumeBtn.hidden = true;
 
   const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -88,19 +110,41 @@ function openSocket() {
     statusEl.className = 'connected';
   };
   ws.onmessage = (event) => {
+    resetRetry();
     const reading = JSON.parse(event.data);
     updateDeviceCard(reading);
   };
-  ws.onerror = () => {
-    statusEl.textContent = 'WebSocket error';
-    statusEl.className = 'error';
-  };
+  // onerror is always followed by onclose, which decides whether to retry.
+  ws.onerror = () => {};
   ws.onclose = (event) => {
     if (event.code === 4000) {
+      resetRetry();
       statusEl.textContent = 'Paused to save server resources.';
       statusEl.className = '';
       resumeBtn.hidden = false;
       return;
+    }
+    if (event.code === 1008) {
+      // Tokens expire after 30 min, same as the /ws cap, so Resume can no longer work.
+      resetRetry();
+      token = null;
+      statusEl.textContent = 'Session expired, please log in again.';
+      statusEl.className = 'error';
+      document.getElementById('login-box').hidden = false;
+      return;
+    }
+    if (event.code !== 1013) {
+      const now = Date.now();
+      if (retryDeadline === null) retryDeadline = now + RETRY_WINDOW_MS;
+      if (now + retryDelay < retryDeadline) {
+        statusEl.textContent = 'Reconnecting...';
+        statusEl.className = '';
+        retryTimer = setTimeout(openSocket, retryDelay);
+        retryDelay = Math.min(retryDelay * 2, 4000);
+        return;
+      }
+      resetRetry();
+      resumeBtn.hidden = false;
     }
     statusEl.textContent = 'Disconnected';
     statusEl.className = 'error';
