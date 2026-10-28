@@ -96,13 +96,27 @@ function drawSparkline(canvas, values) {
 const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
 const resumeBtn = document.getElementById('resume');
 
+// The app can be asleep or waking when the socket opens, which closes it abnormally (e.g. 1006).
+// Retry with backoff for up to 30 s before giving up.
+const RETRY_WINDOW_MS = 30000;
+let retryDeadline = null;
+let retryDelay = 500;
+let retryTimer = null;
+
+function resetRetry() {
+  retryDeadline = null;
+  retryDelay = 500;
+}
+
 function connect() {
+  clearTimeout(retryTimer);
   resumeBtn.hidden = true;
-  setStatus('Connecting...');
+  setStatus(retryDeadline === null ? 'Connecting...' : 'Reconnecting...');
   const ws = new WebSocket(proto + '//' + location.host + '/demo/ws');
 
 ws.onopen = () => setStatus('Connected — waiting for readings...', 'connected');
 ws.onmessage = (event) => {
+  resetRetry();
   const msg = JSON.parse(event.data);
   if (msg.type === 'snapshot') {
     // A resumed connection sends a fresh snapshot; drop the old cards first.
@@ -118,18 +132,35 @@ ws.onmessage = (event) => {
   applyReading(msg.device_id, msg);
   if (cards[msg.device_id]) drawSparkline(cards[msg.device_id].canvas, cards[msg.device_id].history);
 };
-ws.onerror = () => setStatus('WebSocket error', 'error');
+// onerror is always followed by onclose, which decides whether to retry.
+ws.onerror = () => {};
 ws.onclose = (event) => {
   if (event.code === 4000) {
+    resetRetry();
     setStatus('Paused to save server resources.');
     resumeBtn.hidden = false;
     return;
   }
-  setStatus(event.code === 1013 ? 'Demo is full right now — try again in a minute.' : 'Disconnected', 'error');
+  if (event.code === 1013 || event.code === 1008) {
+    resetRetry();
+    setStatus(event.code === 1013 ? 'Demo is full right now — try again in a minute.' : 'Disconnected', 'error');
+    return;
+  }
+  const now = Date.now();
+  if (retryDeadline === null) retryDeadline = now + RETRY_WINDOW_MS;
+  if (now + retryDelay < retryDeadline) {
+    setStatus('Reconnecting...');
+    retryTimer = setTimeout(connect, retryDelay);
+    retryDelay = Math.min(retryDelay * 2, 4000);
+    return;
+  }
+  resetRetry();
+  setStatus('Disconnected', 'error');
+  resumeBtn.hidden = false;
 };
 }
 
-resumeBtn.onclick = connect;
+resumeBtn.onclick = () => { resetRetry(); connect(); };
 connect();
 </script>
 
